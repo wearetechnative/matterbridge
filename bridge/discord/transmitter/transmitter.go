@@ -62,14 +62,18 @@ func New(session *discordgo.Session, guild string, title string, autoCreate bool
 	}
 }
 
+func (t *Transmitter) StartThread(channelID string, threadID string, name string) (*discordgo.Channel, error) {
+	return t.session.MessageThreadStart(channelID, threadID, name, 0)
+}
+
 // Send transmits a message to the given channel with the provided webhook data, and waits until Discord responds with message data.
-func (t *Transmitter) Send(channelID string, params *discordgo.WebhookParams) (*discordgo.Message, error) {
+func (t *Transmitter) Send(channelID string, threadID string, params *discordgo.WebhookParams) (*discordgo.Message, error) {
 	wh, err := t.getOrCreateWebhook(channelID)
 	if err != nil {
 		return nil, err
 	}
 
-	msg, err := t.session.WebhookExecute(wh.ID, wh.Token, true, params)
+	msg, err := t.session.WebhookThreadExecute(wh.ID, wh.Token, true, threadID, params)
 	if err != nil {
 		return nil, fmt.Errorf("execute failed: %w", err)
 	}

@@ -43,12 +43,13 @@ func (b *Bdiscord) maybeGetLocalAvatar(msg *config.Message) string {
 	return ""
 }
 
-func (b *Bdiscord) webhookSendTextOnly(msg *config.Message, channelID string) (string, error) {
+func (b *Bdiscord) webhookSendTextOnly(msg *config.Message, channelID string, threadID string) (string, error) {
 	msgParts := helper.ClipOrSplitMessage(msg.Text, MessageLength, b.GetString("MessageClipped"), b.GetInt("MessageSplitMaxCount"))
 	msgIds := []string{}
 	for _, msgPart := range msgParts {
 		res, err := b.transmitter.Send(
 			channelID,
+			threadID,
 			&discordgo.WebhookParams{
 				Content:         msgPart,
 				Username:        msg.Username,
@@ -66,7 +67,7 @@ func (b *Bdiscord) webhookSendTextOnly(msg *config.Message, channelID string) (s
 	return strings.Join(msgIds, ";"), nil
 }
 
-func (b *Bdiscord) webhookSendFilesOnly(msg *config.Message, channelID string) error {
+func (b *Bdiscord) webhookSendFilesOnly(msg *config.Message, channelID string, threadID string) error {
 	for _, f := range msg.Extra["file"] {
 		fi := f.(config.FileInfo) //nolint:forcetypeassert
 		file := discordgo.File{
@@ -80,6 +81,7 @@ func (b *Bdiscord) webhookSendFilesOnly(msg *config.Message, channelID string) e
 		// This has to be re-enabled when we implement message deletion.
 		_, err := b.transmitter.Send(
 			channelID,
+			threadID,
 			&discordgo.WebhookParams{
 				Username:        msg.Username,
 				AvatarURL:       msg.Avatar,
@@ -110,15 +112,36 @@ func (b *Bdiscord) webhookSend(msg *config.Message, channelID string) (string, e
 		msg.Avatar = b.maybeGetLocalAvatar(msg)
 	}
 
-	// WebhookParams can have either `Content` or `File`.
+	threadID := msg.ParentID
 
+	if threadID != "" {
+		if _, ok := b.cache.Get(cThread + msg.ParentID); !ok {
+			name := "Thread"
+			if msg.Text != "" {
+				name = msg.Text
+				if len(name) > 15 {
+					name = name[:15] + "..."
+				}
+			}
+			if _, err := b.transmitter.StartThread(channelID, threadID, name); err == nil {
+				b.cache.Add(cMessage + msg.ParentID, channelID)
+				b.cache.Add(cThread + msg.ParentID, true)
+			} else {
+				threadID = ""
+				b.Log.Errorf("Can't create thread %+v", err)
+			}
+		}
+	}
+
+
+	// WebhookParams can have either `Content` or `File`.
 	// We can't send empty messages.
 	if msg.Text != "" {
-		res, err = b.webhookSendTextOnly(msg, channelID)
+		res, err = b.webhookSendTextOnly(msg, channelID, threadID)
 	}
 
 	if err == nil && msg.Extra != nil {
-		err = b.webhookSendFilesOnly(msg, channelID)
+		err = b.webhookSendFilesOnly(msg, channelID, threadID)
 	}
 
 	return res, err

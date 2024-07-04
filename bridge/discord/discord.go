@@ -17,6 +17,8 @@ import (
 const (
 	MessageLength = 1950
 	cFileUpload   = "file_upload"
+	cMessage      = "msg"
+	cThread       = "thread"
 )
 
 type Bdiscord struct {
@@ -37,7 +39,8 @@ type Bdiscord struct {
 	nickMemberMap map[string]*discordgo.Member
 
 	// Webhook specific logic
-	useAutoWebhooks bool
+	useAutoWebhooks   bool
+	autoCreateThreads bool
 	transmitter     *transmitter.Transmitter
 	cache           *lru.Cache
 }
@@ -277,8 +280,8 @@ func (b *Bdiscord) Send(msg config.Message) (string, error) {
 	}
 
 	// Use webhook to send the message
-	useWebhooks := b.shouldMessageUseWebhooks(&msg)
-	if useWebhooks && msg.ParentID == "" {
+	useWebhooks := b.shouldMessageUseWebhooks(&msg) && (msg.ParentID == "" || b.GetBool("AutoThreads"))
+	if useWebhooks {
 		return b.handleEventWebhook(&msg, channelID)
 	}
 

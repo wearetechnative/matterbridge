@@ -850,6 +850,9 @@ UseDiscriminator=false
 # as turning this on will automatically load or create webhooks for each channel.
 # This feature requires the "Manage Webhooks" permission (either globally or as per-channel).
 AutoWebhooks=false
+# In AutoWebhooks mode and enabled PreserveThreading will start create new thread and not replay in channel
+# Create thread in private and public required
+AutoThreads=false
 
 # EditDisable disables sending of edits to other bridges
 EditDisable=false

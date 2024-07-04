@@ -13,6 +13,8 @@ func (b *Bdiscord) messageDelete(s *discordgo.Session, m *discordgo.MessageDelet
 	}
 	rmsg := config.Message{Account: b.Account, ID: m.ID, Event: config.EventMsgDelete, Text: config.EventMsgDelete}
 	rmsg.Channel = b.getChannelName(m.ChannelID)
+	b.cache.Remove(cMessage + m.ID)
+	b.cache.Remove(cThread + m.ID)
 
 	b.Log.Debugf("<= Sending message from %s to gateway", b.Account)
 	b.Log.Debugf("<= Message is %#v", rmsg)
@@ -36,6 +38,7 @@ func (b *Bdiscord) messageDeleteBulk(s *discordgo.Session, m *discordgo.MessageD
 
 		b.Log.Debugf("<= Sending message from %s to gateway", b.Account)
 		b.Log.Debugf("<= Message is %#v", rmsg)
+		b.cache.Remove(cMessage + msgID)
 		b.Remote <- rmsg
 	}
 }
@@ -118,8 +121,20 @@ func (b *Bdiscord) messageCreate(s *discordgo.Session, m *discordgo.MessageCreat
 		}
 	}
 
-	// set channel name
-	rmsg.Channel = b.getChannelName(m.ChannelID)
+	if pi, ok := b.cache.Get(cMessage + m.ChannelID); ok {
+		rmsg.Channel = b.getChannelName(pi.(string))
+		rmsg.ParentID = m.ChannelID
+		if m.Type == discordgo.MessageTypeThreadStarterMessage {
+			b.cache.Add(cThread + m.ChannelID, true)
+			b.Log.Debugf("Thread started")
+		}
+	} else {
+		// set channel name
+		rmsg.Channel = b.getChannelName(m.ChannelID)
+		b.cache.Add(cMessage + m.ID, m.ChannelID)
+	}
+
+
 
 	fromWebhook := m.WebhookID != ""
 	if !fromWebhook && !b.GetBool("UseUserName") {
