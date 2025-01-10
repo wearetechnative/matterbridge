@@ -177,7 +177,7 @@ func (b *Bslack) handleSlackClientSocketMode(messages chan *config.Message) {
 		case "hello":
 			continue
 		default:
-			b.Log.Errorf("Unexpected event type received: %s\n", evt.Type)
+			//b.Log.Errorf("Unexpected event type received: %s\n", evt.Type)
 		}
 	}
 }
