@@ -4,6 +4,7 @@
 
 # Exclude configuration file
 matterbridge.toml
+msteams_session.json
 
 # Exclude IDE Files
 .vscode
