@@ -221,7 +221,7 @@ func (b *Bmsteams) poll(channelName string) error {
 			b.Log.Debugf("<= Message is %#v", rmsg)
 			b.Remote <- rmsg
 		}
-		time.Sleep(time.Second * 5)
+		time.Sleep(time.Second * 60)
 	}
 }
 
