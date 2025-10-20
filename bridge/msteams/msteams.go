@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/42wim/matterbridge/bridge"
@@ -20,6 +21,7 @@ import (
 )
 
 var (
+	// offline_access is included to allow refresh tokens for long-running services
 	defaultScopes = []string{"openid", "profile", "offline_access", "Group.Read.All", "Group.ReadWrite.All"}
 	attachRE      = regexp.MustCompile(`<attachment id=.*?attachment>`)
 )
@@ -35,6 +37,45 @@ func New(cfg *bridge.Config) bridge.Bridger {
 	return &Bmsteams{Config: cfg}
 }
 
+// logger is a minimal interface to log errors/warnings without importing a specific logger type
+type logger interface {
+	Errorf(string, ...interface{})
+	Warnf(string, ...interface{})
+}
+
+// savingTokenSource wraps a base TokenSource and persists the token cache
+// to disk whenever the refresh token rotates.
+type savingTokenSource struct {
+	base  oauth2.TokenSource
+	m     *msauth.Manager
+	path  string
+	log   logger
+	mu    sync.Mutex
+	lastRT string
+}
+
+func (s *savingTokenSource) Token() (*oauth2.Token, error) {
+	tok, err := s.base.Token()
+	if err != nil {
+		return nil, err
+	}
+
+	// If refresh token rotated, save the cache to disk so restarts continue working
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if tok.RefreshToken != "" && tok.RefreshToken != s.lastRT {
+		if err := s.m.SaveFile(s.path); err != nil {
+			if s.log != nil {
+				s.log.Errorf("Couldn't save sessionfile in %s: %v", s.path, err)
+			}
+		} else {
+			s.lastRT = tok.RefreshToken
+		}
+	}
+
+	return tok, nil
+}
+
 func (b *Bmsteams) Connect() error {
 	tokenCachePath := b.GetString("sessionFile")
 	if tokenCachePath == "" {
@@ -43,26 +84,37 @@ func (b *Bmsteams) Connect() error {
 	ctx := context.Background()
 	m := msauth.NewManager()
 	m.LoadFile(tokenCachePath) //nolint:errcheck
+
+	// Request device code flow with offline_access so we get refresh tokens
 	ts, err := m.DeviceAuthorizationGrant(ctx, b.GetString("TenantID"), b.GetString("ClientID"), defaultScopes, nil)
 	if err != nil {
 		return err
 	}
-	err = m.SaveFile(tokenCachePath)
-	if err != nil {
+
+	// Save the initial token cache (contains refresh token)
+	if err := m.SaveFile(tokenCachePath); err != nil {
 		b.Log.Errorf("Couldn't save sessionfile in %s: %s", tokenCachePath, err)
 	}
-	// make file readable only for matterbridge user
-	err = os.Chmod(tokenCachePath, 0o600)
-	if err != nil {
+	// Make file readable only for matterbridge user
+	if err := os.Chmod(tokenCachePath, 0o600); err != nil {
 		b.Log.Errorf("Couldn't change permissions for %s: %s", tokenCachePath, err)
 	}
-	httpClient := oauth2.NewClient(ctx, ts)
+
+	// Wrap the TokenSource so any refresh writes the new refresh token to disk
+	savingTS := &savingTokenSource{
+		base:   oauth2.ReuseTokenSource(nil, ts),
+		m:      m,
+		path:   tokenCachePath,
+		log:    b.Log,
+		lastRT: "", // will be set after first save on rotation
+	}
+
+	httpClient := oauth2.NewClient(ctx, savingTS)
 	graphClient := msgraph.NewClient(httpClient)
 	b.gc = graphClient
 	b.ctx = ctx
 
-	err = b.setBotID()
-	if err != nil {
+	if err := b.setBotID(); err != nil {
 		return err
 	}
 	b.Log.Info("Connection succeeded")
@@ -140,14 +192,14 @@ func (b *Bmsteams) getMessages(channel string) ([]msgraph.ChatMessage, error) {
 		return nil, err
 	}
 	b.Log.Debugf("got %#v messages", len(rct))
-  for _, msg := range rct {
+	for _, msg := range rct {
 		replyct, replyerr := b.getReplies(channel, msg)
 		if replyerr != nil {
 			return nil, replyerr
 		}
 		rct = append(rct, replyct...)
-    }
-    return rct, nil
+	}
+	return rct, nil
 }
 
 //nolint:gocognit
@@ -213,7 +265,7 @@ func (b *Bmsteams) poll(channelName string) error {
 				ID:       *msg.ID,
 				Extra:    make(map[string][]interface{}),
 			}
-      	if msg.ReplyToID != nil {
+			if msg.ReplyToID != nil {
 				rmsg.ParentID = *msg.ReplyToID
 			}
 
